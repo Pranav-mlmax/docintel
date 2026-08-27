@@ -1,26 +1,65 @@
 """
 AI engine:
-- Local embeddings via sentence-transformers (free, no API key needed)
+- Embeddings via Hugging Face Inference API (free tier, no heavy local model —
+  keeps memory footprint small enough for Render's free 512MB instance)
 - LLM calls (QA, summarization) via OpenRouter (free-tier model)
 """
 import os
+import time
 import requests
-from sentence_transformers import SentenceTransformer
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Loaded once at startup — 384-dim embeddings, fast + free
-_embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+HF_API_KEY = os.getenv("HF_API_KEY")  # optional but recommended (free, higher rate limit)
+HF_EMBED_URL = "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
+
+
+def _hf_headers():
+    headers = {"Content-Type": "application/json"}
+    if HF_API_KEY:
+        headers["Authorization"] = f"Bearer {HF_API_KEY}"
+    return headers
+
+
+def _call_hf_embed(texts: list[str], retries: int = 3):
+    """Calls HF feature-extraction endpoint. Retries on cold-start (503)."""
+    payload = {"inputs": texts, "options": {"wait_for_model": True}}
+    for attempt in range(retries):
+        resp = requests.post(HF_EMBED_URL, headers=_hf_headers(), json=payload, timeout=60)
+        if resp.status_code == 200:
+            data = resp.json()
+            # API returns token-level embeddings sometimes; mean-pool if needed
+            result = []
+            for item in data:
+                if isinstance(item[0], list):  # token-level -> mean pool
+                    n = len(item)
+                    dim = len(item[0])
+                    avg = [sum(tok[d] for tok in item) / n for d in range(dim)]
+                    result.append(avg)
+                else:
+                    result.append(item)
+            return result
+        elif resp.status_code == 503:
+            time.sleep(3)
+            continue
+        else:
+            raise RuntimeError(f"HF embed failed: {resp.status_code} {resp.text}")
+    raise RuntimeError("HF embed failed after retries (model still loading)")
 
 
 def embed_text(text: str):
-    return _embed_model.encode(text).tolist()
+    return _call_hf_embed([text])[0]
 
 
 def embed_batch(texts: list[str]):
-    return _embed_model.encode(texts).tolist()
+    # HF free tier is happier with smaller batches; chunk into groups of 20
+    results = []
+    for i in range(0, len(texts), 20):
+        batch = texts[i:i + 20]
+        results.extend(_call_hf_embed(batch))
+    return results
 
 
 def call_llm(system_prompt: str, user_prompt: str, max_tokens: int = 700) -> str:
