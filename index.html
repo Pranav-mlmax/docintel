@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DocIntel — Multi-Document Search &amp; Q&amp;A</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #151b23;
+    --panel-2: #1c232d;
+    --border: #2a323d;
+    --text: #e6edf3;
+    --text-dim: #8b949e;
+    --accent: #4fd1c5;
+    --accent-dim: #2d7d74;
+    --warn: #e3b341;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+  }
+  header {
+    padding: 24px 32px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  header h1 {
+    font-size: 20px;
+    font-family: 'Courier New', monospace;
+    letter-spacing: 0.5px;
+    margin: 0;
+  }
+  header h1 span { color: var(--accent); }
+  header p { color: var(--text-dim); margin: 0; font-size: 13px; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 24px;
+    padding: 24px 32px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+  }
+  .panel h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    margin: 0 0 14px 0;
+  }
+
+  .dropzone {
+    border: 1.5px dashed var(--border);
+    border-radius: 8px;
+    padding: 24px 12px;
+    text-align: center;
+    cursor: pointer;
+    color: var(--text-dim);
+    font-size: 13px;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .dropzone:hover, .dropzone.drag { border-color: var(--accent); background: var(--panel-2); color: var(--text); }
+  input[type=file] { display: none; }
+
+  button {
+    background: var(--accent-dim);
+    color: var(--text);
+    border: none;
+    padding: 9px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    margin-top: 10px;
+    width: 100%;
+  }
+  button:hover { background: var(--accent); color: #0d1117; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.secondary { background: var(--panel-2); border: 1px solid var(--border); }
+  button.secondary:hover { background: var(--border); color: var(--text); }
+
+  .doc-list { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .doc-item {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 12.5px;
+  }
+  .doc-item .fname { color: var(--text); font-weight: 600; }
+  .doc-item .meta { color: var(--text-dim); font-size: 11px; margin-top: 2px; }
+
+  .search-box {
+    display: flex;
+    gap: 10px;
+  }
+  .search-box input {
+    flex: 1;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px 14px;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+  .search-box input:focus { outline: none; border-color: var(--accent); }
+  .search-box button { width: auto; margin-top: 0; padding: 12px 20px; }
+
+  .answer-block {
+    margin-top: 20px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    padding: 16px 18px;
+    line-height: 1.6;
+    font-size: 14.5px;
+    white-space: pre-wrap;
+  }
+
+  .sources { margin-top: 16px; }
+  .sources h3 { font-size: 12px; text-transform: uppercase; color: var(--text-dim); letter-spacing: 1px; }
+  .source-card {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    font-size: 12.5px;
+  }
+  .source-card .src-head {
+    display: flex;
+    justify-content: space-between;
+    color: var(--accent);
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .source-card .sim { color: var(--warn); font-weight: 400; }
+  .source-card .excerpt { color: var(--text-dim); }
+
+  .loader { color: var(--text-dim); font-size: 13px; margin-top: 12px; }
+  .empty-state { color: var(--text-dim); font-size: 13px; text-align: center; padding: 40px 0; }
+
+  .status-line { font-size: 11px; color: var(--text-dim); margin-top: 8px; }
+  .status-line.ok { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Doc<span>Intel</span></h1>
+  <p>Multi-document search &amp; natural language Q&amp;A</p>
+</header>
+
+<div class="layout">
+  <!-- LEFT: Upload + Documents -->
+  <div class="panel">
+    <h2>Upload Documents</h2>
+    <div class="dropzone" id="dropzone">
+      Drop PDF / TXT files here<br>or click to browse
+    </div>
+    <input type="file" id="fileInput" multiple accept=".pdf,.txt">
+    <button id="uploadBtn" disabled>Process & Index</button>
+    <div class="status-line" id="uploadStatus"></div>
+
+    <h2 style="margin-top:22px;">Collection</h2>
+    <div class="doc-list" id="docList"><div class="empty-state">No documents indexed yet</div></div>
+
+    <button class="secondary" id="summarizeAllBtn" style="margin-top:16px;">Summarize Entire Collection</button>
+  </div>
+
+  <!-- RIGHT: Search -->
+  <div class="panel">
+    <h2>Ask a question across all documents</h2>
+    <div class="search-box">
+      <input type="text" id="queryInput" placeholder="e.g. What is the status of Project C and its budget allocation?">
+      <button id="searchBtn">Search</button>
+    </div>
+    <div id="resultsArea"></div>
+  </div>
+</div>
+
+<script>
+const API = "http://localhost:5000/api";
+let selectedFiles = [];
+
+const dropzone = document.getElementById("dropzone");
+const fileInput = document.getElementById("fileInput");
+const uploadBtn = document.getElementById("uploadBtn");
+const uploadStatus = document.getElementById("uploadStatus");
+const docList = document.getElementById("docList");
+const resultsArea = document.getElementById("resultsArea");
+
+dropzone.addEventListener("click", () => fileInput.click());
+dropzone.addEventListener("dragover", e => { e.preventDefault(); dropzone.classList.add("drag"); });
+dropzone.addEventListener("dragleave", () => dropzone.classList.remove("drag"));
+dropzone.addEventListener("drop", e => {
+  e.preventDefault();
+  dropzone.classList.remove("drag");
+  handleFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener("change", e => handleFiles(e.target.files));
+
+function handleFiles(fileListObj) {
+  selectedFiles = Array.from(fileListObj);
+  dropzone.innerHTML = selectedFiles.length
+    ? `${selectedFiles.length} file(s) selected:<br>` + selectedFiles.map(f => f.name).join(", ")
+    : "Drop PDF / TXT files here<br>or click to browse";
+  uploadBtn.disabled = selectedFiles.length === 0;
+}
+
+uploadBtn.addEventListener("click", async () => {
+  if (!selectedFiles.length) return;
+  uploadBtn.disabled = true;
+  uploadStatus.textContent = "Processing & indexing... this can take a bit per file.";
+  uploadStatus.className = "status-line";
+
+  const formData = new FormData();
+  selectedFiles.forEach(f => formData.append("files", f));
+
+  try {
+    const res = await fetch(`${API}/upload`, { method: "POST", body: formData });
+    const data = await res.json();
+    uploadStatus.textContent = `Done: ${data.results.map(r => r.filename + " (" + r.status + ")").join(", ")}`;
+    uploadStatus.className = "status-line ok";
+    selectedFiles = [];
+    dropzone.innerHTML = "Drop PDF / TXT files here<br>or click to browse";
+    fileInput.value = "";
+    loadDocuments();
+  } catch (err) {
+    uploadStatus.textContent = "Upload failed: " + err.message;
+  } finally {
+    uploadBtn.disabled = selectedFiles.length === 0;
+  }
+});
+
+async function loadDocuments() {
+  try {
+    const res = await fetch(`${API}/documents`);
+    const data = await res.json();
+    if (!data.documents.length) {
+      docList.innerHTML = `<div class="empty-state">No documents indexed yet</div>`;
+      return;
+    }
+    docList.innerHTML = data.documents.map(d => `
+      <div class="doc-item">
+        <div class="fname">${d.filename}</div>
+        <div class="meta">${d.num_chunks} chunks · ${d.doc_type.toUpperCase()}</div>
+      </div>
+    `).join("");
+  } catch (err) {
+    docList.innerHTML = `<div class="empty-state">Could not load documents (${err.message})</div>`;
+  }
+}
+
+document.getElementById("searchBtn").addEventListener("click", runSearch);
+document.getElementById("queryInput").addEventListener("keydown", e => { if (e.key === "Enter") runSearch(); });
+
+async function runSearch() {
+  const query = document.getElementById("queryInput").value.trim();
+  if (!query) return;
+  resultsArea.innerHTML = `<div class="loader">Searching across documents & generating answer...</div>`;
+
+  try {
+    const res = await fetch(`${API}/search`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, top_k: 6 })
+    });
+    const data = await res.json();
+
+    let html = `<div class="answer-block">${escapeHtml(data.answer)}</div>`;
+    if (data.sources && data.sources.length) {
+      html += `<div class="sources"><h3>Sources</h3>`;
+      data.sources.forEach(s => {
+        html += `
+          <div class="source-card">
+            <div class="src-head"><span>${s.filename} · p.${s.page_number ?? "-"}</span><span class="sim">sim ${s.similarity}</span></div>
+            <div class="excerpt">${escapeHtml(s.excerpt)}...</div>
+          </div>`;
+      });
+      html += `</div>`;
+    }
+    resultsArea.innerHTML = html;
+  } catch (err) {
+    resultsArea.innerHTML = `<div class="loader">Search failed: ${err.message}</div>`;
+  }
+}
+
+document.getElementById("summarizeAllBtn").addEventListener("click", async () => {
+  resultsArea.innerHTML = `<div class="loader">Summarizing entire collection...</div>`;
+  try {
+    const res = await fetch(`${API}/summarize-all`);
+    const data = await res.json();
+    resultsArea.innerHTML = `<div class="answer-block"><strong>Collection Summary</strong>\n\n${escapeHtml(data.summary)}</div>`;
+  } catch (err) {
+    resultsArea.innerHTML = `<div class="loader">Failed: ${err.message}</div>`;
+  }
+});
+
+function escapeHtml(str) {
+  const d = document.createElement("div");
+  d.innerText = str;
+  return d.innerHTML;
+}
+
+loadDocuments();
+</script>
+
+</body>
+</html>
