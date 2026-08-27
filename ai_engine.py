@@ -13,7 +13,7 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 HF_API_KEY = os.getenv("HF_API_KEY")  # optional but recommended (free, higher rate limit)
-HF_EMBED_URL = "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
+HF_EMBED_URL = "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2"
 
 
 def _hf_headers():
@@ -23,11 +23,17 @@ def _hf_headers():
     return headers
 
 
-def _call_hf_embed(texts: list[str], retries: int = 3):
-    """Calls HF feature-extraction endpoint. Retries on cold-start (503)."""
+def _call_hf_embed(texts: list[str], retries: int = 5):
+    """Calls HF feature-extraction endpoint. Retries on cold-start (503) or transient network errors."""
     payload = {"inputs": texts, "options": {"wait_for_model": True}}
+    last_err = None
     for attempt in range(retries):
-        resp = requests.post(HF_EMBED_URL, headers=_hf_headers(), json=payload, timeout=60)
+        try:
+            resp = requests.post(HF_EMBED_URL, headers=_hf_headers(), json=payload, timeout=30)
+        except requests.exceptions.RequestException as e:
+            last_err = e
+            time.sleep(2 * (attempt + 1))
+            continue
         if resp.status_code == 200:
             data = resp.json()
             # API returns token-level embeddings sometimes; mean-pool if needed
@@ -46,7 +52,7 @@ def _call_hf_embed(texts: list[str], retries: int = 3):
             continue
         else:
             raise RuntimeError(f"HF embed failed: {resp.status_code} {resp.text}")
-    raise RuntimeError("HF embed failed after retries (model still loading)")
+    raise RuntimeError(f"HF embed failed after {retries} retries: {last_err}")
 
 
 def embed_text(text: str):
@@ -130,3 +136,4 @@ def multi_doc_summary(doc_summaries: list[dict]) -> str:
     )
     user_prompt = f"Individual document summaries:\n\n{blocks}\n\nWrite a combined overview:"
     return call_llm(system_prompt, user_prompt, max_tokens=400)
+  
